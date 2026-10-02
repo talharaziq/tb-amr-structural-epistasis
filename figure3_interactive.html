@@ -1,0 +1,101 @@
+# Install required libraries
+!pip install biopython py3dmol -q
+
+import os
+import json
+import urllib.request
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from Bio.PDB import PDBParser
+
+# 1. Setup directories
+results_dir = '/content/drive/MyDrive/AMR_Structural_Mutation_Project/results/figures'
+os.makedirs(results_dir, exist_ok=True)
+
+# 2. Dynamically fetch correct PDB download URL via AlphaFold API for UniProt I6XD65
+uniprot_id = "I6XD65"
+api_url = f"https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
+
+print(f"Querying AlphaFold API for {uniprot_id}...")
+req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
+
+try:
+    with urllib.request.urlopen(req) as response:
+        data = json.loads(response.read().decode())
+        # The API returns a list of prediction records; grab the pdbUrl from the first entry
+        pdb_url = data[0]['pdbUrl']
+        print(f"Found PDB URL: {pdb_url}")
+except Exception as e:
+    raise RuntimeError(f"Failed to fetch metadata from AlphaFold API: {e}")
+
+# 3. Download structure for AF-I6XD65 (M. tuberculosis pncA)
+pdb_path = "/content/AF-I6XD65.pdb"
+print(f"Downloading structure file...")
+urllib.request.urlretrieve(pdb_url, pdb_path)
+
+# 4. Parse structure and extract C-alpha coordinates for mutation positions
+parser = PDBParser(QUIET=True)
+structure = parser.get_structure("AF-I6XD65", pdb_path)
+
+# List of mutation positions identified for AF-I6XD65
+mut_positions = [
+    1,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,21,22,23,24,26,27,28,29,30,
+    31,32,34,35,36,38,41,42,43,44,45,46,47,48,49,51,52,53,54,55,57,58,59,61,
+    62,63,64,65,66,67,68,69,70,71,72,75,76,77,78,79,80,81,82,85,86,88,89,90,
+    92,93,94,95,96,97,100,101,102,103,104,105,106,108,109,110,112,114,115,116,
+    117,118,119,120,121,122,123,124,125,127,128,129,130,131,132,133,134,135,
+    136,137,138,139,140,141,142,143,145,146,147,149,151,152,153,154,155,156,
+    157,158,159,160,161,162,163,164,165,166,168,170,171,172,173,174,175,176,
+    177,179,180,181,182,183,184,186
+]
+
+all_coords = []
+mut_coords = []
+
+for model in structure:
+    for chain in model:
+        for residue in chain:
+            if 'CA' in residue:
+                res_id = residue.get_id()[1]
+                coord = residue['CA'].get_coord()
+                all_coords.append((res_id, coord[0], coord[1], coord[2]))
+                if res_id in mut_positions:
+                    mut_coords.append((res_id, coord[0], coord[1], coord[2]))
+
+df_all = pd.DataFrame(all_coords, columns=['ResID', 'X', 'Y', 'Z'])
+df_mut = pd.DataFrame(mut_coords, columns=['ResID', 'X', 'Y', 'Z'])
+
+# 5. Generate Publication-Quality 3D Spatial Projection Plot (Matplotlib)
+fig = plt.figure(figsize=(10, 8), dpi=300)
+ax = fig.add_subplot(111, projection='3d')
+
+ax.plot(df_all['X'], df_all['Y'], df_all['Z'], color='lightgray', linewidth=1.5, alpha=0.7, label='Protein Backbone')
+ax.scatter(df_mut['X'], df_mut['Y'], df_mut['Z'], color='#D95F02', s=50, alpha=0.9, edgecolor='k', linewidth=0.5, label='Co-required Mutation Sites')
+
+ax.set_title("Figure 3: 3D Spatial Distribution of Co-required Mutations\n(M. tuberculosis pncA - AF-I6XD65)", fontsize=12, fontweight='bold', pad=15)
+ax.set_xlabel("X Coordinate (Å)", fontsize=10)
+ax.set_ylabel("Y Coordinate (Å)", fontsize=10)
+ax.set_zlabel("Z Coordinate (Å)", fontsize=10)
+ax.legend(loc='upper left', frameon=True)
+
+plt.tight_layout()
+output_image_path = os.path.join(results_dir, 'figure3_pymol_3d_render.png')
+plt.savefig(output_image_path, dpi=300, bbox_inches='tight')
+plt.show()
+
+print(f"\n[SUCCESS] Figure 3 generated and saved successfully to:\n{output_image_path}")
+
+# 6. Interactive 3D View
+print("\nLoading interactive 3D viewer via py3Dmol...")
+import py3Dmol
+
+with open(pdb_path, 'r') as f:
+    pdb_data = f.read()
+
+view = py3Dmol.view(width=700, height=500)
+view.addModel(pdb_data, "pdb")
+view.setStyle({'model': -1}, {'cartoon': {'color': 'lightgrey'}})
+view.addStyle({'resi': mut_positions}, {'sphere': {'color': '#D95F02', 'radius': 0.8}})
+view.zoomTo({'resi': mut_positions})
+display(view)
